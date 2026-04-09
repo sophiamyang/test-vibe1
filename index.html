@@ -4,18 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>3D Heatmap – London</title>
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
-    #map { width: 100%; height: 100%; }
+    #container { width: 100%; height: 100%; position: relative; }
     #tooltip {
       position: absolute;
       z-index: 1;
       pointer-events: none;
-      background: rgba(0,0,0,0.8);
+      background: rgba(0,0,0,0.85);
       color: #fff;
-      padding: 6px 10px;
+      padding: 8px 12px;
       border-radius: 4px;
       font-size: 13px;
       display: none;
@@ -25,42 +25,47 @@
       top: 12px;
       left: 12px;
       z-index: 1;
-      background: rgba(255,255,255,0.92);
-      padding: 12px 16px;
+      background: rgba(20,20,30,0.88);
+      color: #ddd;
+      padding: 14px 18px;
       border-radius: 8px;
       font-size: 13px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      backdrop-filter: blur(6px);
     }
-    #controls h2 { margin: 0 0 6px; font-size: 15px; }
-    #controls label { display: block; margin: 4px 0; }
+    #controls h2 { margin: 0 0 8px; font-size: 15px; color: #fff; }
+    #controls label { display: block; margin: 6px 0; }
     #controls input[type=range] { width: 140px; vertical-align: middle; }
+    #controls span { display: inline-block; width: 32px; text-align: right; }
   </style>
 </head>
 <body>
-  <div id="map"></div>
+  <div id="container"></div>
   <div id="tooltip"></div>
   <div id="controls">
     <h2>3D Heatmap</h2>
     <label>Radius: <input type="range" id="radius" min="200" max="3000" value="1000" step="100" />
       <span id="radius-val">1000</span>m</label>
-    <label>Elevation: <input type="range" id="elevation" min="1" max="20" value="8" step="1" />
-      <span id="elevation-val">8</span></label>
-    <label>Coverage: <input type="range" id="coverage" min="0.1" max="1" value="1" step="0.05" />
-      <span id="coverage-val">1</span></label>
+    <label>Elevation: <input type="range" id="elevation" min="1" max="30" value="12" step="1" />
+      <span id="elevation-val">12</span></label>
+    <label>Coverage: <input type="range" id="coverage" min="0.1" max="1" value="0.8" step="0.05" />
+      <span id="coverage-val">0.8</span></label>
   </div>
 
-  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
-  <script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
   <script>
     const DATA_URL =
       'https://raw.githubusercontent.com/uber-common/deck.gl-data/master/examples/3d-heatmap/heatmap-data.csv';
 
+    const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+
     const INITIAL_VIEW = {
-      longitude: -0.1,
-      latitude: 51.5,
-      zoom: 10,
-      pitch: 45,
-      bearing: 0,
+      longitude: -0.12,
+      latitude: 51.51,
+      zoom: 11.2,
+      pitch: 52,
+      bearing: -20,
     };
 
     const COLOR_RANGE = [
@@ -72,32 +77,18 @@
       [209, 55, 78],
     ];
 
-    /* ---- Parse CSV ---- */
     async function loadData() {
       const resp = await fetch(DATA_URL);
       const text = await resp.text();
       const lines = text.trim().split('\n');
-      // skip header
       return lines.slice(1).map(line => {
         const [lng, lat] = line.split(',').map(Number);
         return [lng, lat];
-      });
+      }).filter(d => !isNaN(d[0]) && !isNaN(d[1]));
     }
 
-    /* ---- Tooltip ---- */
     const tooltipEl = document.getElementById('tooltip');
-    function setTooltip({ x, y, object }) {
-      if (object) {
-        tooltipEl.style.display = 'block';
-        tooltipEl.style.left = x + 12 + 'px';
-        tooltipEl.style.top = y + 12 + 'px';
-        tooltipEl.textContent = `${object.points.length} points`;
-      } else {
-        tooltipEl.style.display = 'none';
-      }
-    }
 
-    /* ---- Controls ---- */
     const radiusInput = document.getElementById('radius');
     const elevationInput = document.getElementById('elevation');
     const coverageInput = document.getElementById('coverage');
@@ -113,16 +104,21 @@
       };
     }
 
-    /* ---- Render ---- */
     async function main() {
       const data = await loadData();
 
-      const map = new maplibregl.Map({
-        container: 'map',
-        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-        ...INITIAL_VIEW,
-        interactive: true,
+      const ambientLight = new deck.AmbientLight({
+        color: [255, 255, 255],
+        intensity: 1.0,
       });
+
+      const dirLight = new deck.DirectionalLight({
+        color: [255, 255, 255],
+        intensity: 2.0,
+        direction: [-3, -9, -1],
+      });
+
+      const lightingEffect = new deck.LightingEffect({ ambientLight, dirLight });
 
       function makeLayer(params) {
         return new deck.HexagonLayer({
@@ -137,21 +133,42 @@
           elevationRange: [0, 500],
           extruded: true,
           pickable: true,
-          onHover: setTooltip,
+          material: {
+            ambient: 0.64,
+            diffuse: 0.6,
+            shininess: 32,
+            specularColor: [51, 51, 51],
+          },
+          transitions: {
+            elevationScale: 300,
+          },
+          onHover: info => {
+            if (info.object) {
+              tooltipEl.style.display = 'block';
+              tooltipEl.style.left = info.x + 14 + 'px';
+              tooltipEl.style.top = info.y + 14 + 'px';
+              tooltipEl.textContent = info.object.points.length + ' points';
+            } else {
+              tooltipEl.style.display = 'none';
+            }
+          },
         });
       }
 
-      const overlay = new deck.MapboxOverlay({
+      const deckgl = new deck.DeckGL({
+        container: 'container',
+        mapStyle: MAP_STYLE,
+        initialViewState: INITIAL_VIEW,
+        controller: true,
         layers: [makeLayer(getParams())],
+        effects: [lightingEffect],
       });
-      map.addControl(overlay);
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
       function update() {
         radiusVal.textContent = radiusInput.value;
         elevationVal.textContent = elevationInput.value;
         coverageVal.textContent = coverageInput.value;
-        overlay.setProps({ layers: [makeLayer(getParams())] });
+        deckgl.setProps({ layers: [makeLayer(getParams())] });
       }
 
       radiusInput.addEventListener('input', update);
