@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Heatmap – London</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+    #map { width: 100%; height: 100%; }
+    #tooltip {
+      position: absolute;
+      z-index: 1;
+      pointer-events: none;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 13px;
+      display: none;
+    }
+    #controls {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 1;
+      background: rgba(255,255,255,0.92);
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    }
+    #controls h2 { margin: 0 0 6px; font-size: 15px; }
+    #controls label { display: block; margin: 4px 0; }
+    #controls input[type=range] { width: 140px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="tooltip"></div>
+  <div id="controls">
+    <h2>3D Heatmap</h2>
+    <label>Radius: <input type="range" id="radius" min="200" max="3000" value="1000" step="100" />
+      <span id="radius-val">1000</span>m</label>
+    <label>Elevation: <input type="range" id="elevation" min="1" max="20" value="8" step="1" />
+      <span id="elevation-val">8</span></label>
+    <label>Coverage: <input type="range" id="coverage" min="0.1" max="1" value="1" step="0.05" />
+      <span id="coverage-val">1</span></label>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
+  <script>
+    const DATA_URL =
+      'https://raw.githubusercontent.com/uber-common/deck.gl-data/master/examples/3d-heatmap/heatmap-data.csv';
+
+    const INITIAL_VIEW = {
+      longitude: -0.1,
+      latitude: 51.5,
+      zoom: 10,
+      pitch: 45,
+      bearing: 0,
+    };
+
+    const COLOR_RANGE = [
+      [1, 152, 189],
+      [73, 227, 206],
+      [216, 254, 181],
+      [254, 237, 177],
+      [254, 173, 84],
+      [209, 55, 78],
+    ];
+
+    /* ---- Parse CSV ---- */
+    async function loadData() {
+      const resp = await fetch(DATA_URL);
+      const text = await resp.text();
+      const lines = text.trim().split('\n');
+      // skip header
+      return lines.slice(1).map(line => {
+        const [lng, lat] = line.split(',').map(Number);
+        return [lng, lat];
+      });
+    }
+
+    /* ---- Tooltip ---- */
+    const tooltipEl = document.getElementById('tooltip');
+    function setTooltip({ x, y, object }) {
+      if (object) {
+        tooltipEl.style.display = 'block';
+        tooltipEl.style.left = x + 12 + 'px';
+        tooltipEl.style.top = y + 12 + 'px';
+        tooltipEl.textContent = `${object.points.length} points`;
+      } else {
+        tooltipEl.style.display = 'none';
+      }
+    }
+
+    /* ---- Controls ---- */
+    const radiusInput = document.getElementById('radius');
+    const elevationInput = document.getElementById('elevation');
+    const coverageInput = document.getElementById('coverage');
+    const radiusVal = document.getElementById('radius-val');
+    const elevationVal = document.getElementById('elevation-val');
+    const coverageVal = document.getElementById('coverage-val');
+
+    function getParams() {
+      return {
+        radius: +radiusInput.value,
+        elevationScale: +elevationInput.value,
+        coverage: +coverageInput.value,
+      };
+    }
+
+    /* ---- Render ---- */
+    async function main() {
+      const data = await loadData();
+
+      const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        ...INITIAL_VIEW,
+        interactive: true,
+      });
+
+      function makeLayer(params) {
+        return new deck.HexagonLayer({
+          id: 'heatmap',
+          data,
+          getPosition: d => d,
+          colorRange: COLOR_RANGE,
+          radius: params.radius,
+          upperPercentile: 100,
+          coverage: params.coverage,
+          elevationScale: params.elevationScale,
+          elevationRange: [0, 500],
+          extruded: true,
+          pickable: true,
+          onHover: setTooltip,
+        });
+      }
+
+      const overlay = new deck.MapboxOverlay({
+        layers: [makeLayer(getParams())],
+      });
+      map.addControl(overlay);
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+      function update() {
+        radiusVal.textContent = radiusInput.value;
+        elevationVal.textContent = elevationInput.value;
+        coverageVal.textContent = coverageInput.value;
+        overlay.setProps({ layers: [makeLayer(getParams())] });
+      }
+
+      radiusInput.addEventListener('input', update);
+      elevationInput.addEventListener('input', update);
+      coverageInput.addEventListener('input', update);
+    }
+
+    main();
+  </script>
+</body>
+</html>
